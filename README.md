@@ -149,3 +149,7 @@ Delete the file to undo.
   brightness sync, battery limit and touch mapping for the UX8406MA
 - [NixOS Discourse: ASUS Zenbook Duo 2024 UX8406MA](https://discourse.nixos.org/t/asus-zenbook-duo-2024-ux8406ma-nixos/39792) —
   detailed notes on hardware quirks (PSR, backlight, USB event bouncing on dock)
+
+## License
+
+MIT, see `LICENSE`. The keyboard HID-BPF program in `keyboard-bpf/` keeps its own MIT license from its author.
