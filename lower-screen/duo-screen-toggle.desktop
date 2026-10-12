@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Duo: toggle lower screen
+Comment=Force the Zenbook Duo lower screen on/off until the next dock/undock
+Exec=sh -c '"$HOME/.local/bin/duo-screen" toggle'
+Icon=video-display

@@ -1,0 +1,14 @@
+[Unit]
+Description=Restore battery charge limit on boot, save it on shutdown (ASUS firmware resets it to 100%)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StateDirectory=battery-charge-limit
+# on boot: the last saved value, 80 on first run
+ExecStart=/bin/sh -c 'v=$$(cat /var/lib/battery-charge-limit/end 2>/dev/null); echo "$${v:-80}" > /sys/class/power_supply/BAT0/charge_control_end_threshold'
+# on shutdown: save the current value (e.g. set via KDE settings)
+ExecStop=/bin/sh -c 'cat /sys/class/power_supply/BAT0/charge_control_end_threshold > /var/lib/battery-charge-limit/end'
+
+[Install]
+WantedBy=multi-user.target

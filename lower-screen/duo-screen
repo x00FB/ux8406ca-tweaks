@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Zenbook Duo UX8406CA, KDE Plasma (Wayland):
+# turns the lower screen off while the keyboard is docked and back on when it's undocked.
+#
+#   duo-screen watch    daemon (started by duo-screen.service)
+#   duo-screen toggle   manual override (for a hotkey); reset on the next dock/undock
+#   duo-screen on|off   turn the lower screen on/off
+#   duo-screen status
+set -u
+
+KBD_VENDOR="0b05"
+KBD_PRODUCT="1bf2"              # UX8407 would be 1cd7
+UPPER="eDP-1"
+LOWER="eDP-2"
+LOWER_POS="${DUO_LOWER_POS-0,1125}"  # logical position below eDP-1 (1800x1125 at scale 1.6); empty = leave as is
+UPPER_BL="intel_backlight"
+LOWER_BL="card1-eDP-2-backlight"
+DEBOUNCE=2                      # sec: pogo pins bounce while docking
+
+kbd_docked() {
+    local d
+    for d in /sys/bus/usb/devices/*; do
+        [[ -r $d/idVendor && $(<"$d/idVendor") == "$KBD_VENDOR" && $(<"$d/idProduct") == "$KBD_PRODUCT" ]] && return 0
+    done
+    return 1
+}
+
+outputs() {
+    kscreen-doctor -o 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+
+lower_enabled() {
+    outputs | awk -v out="$LOWER" '$1=="Output:" {hit = ($3==out); next} hit {print $1; exit}' | grep -qx enabled
+}
+
+# output brightness in percent, as KWin sees it ("Brightness control: supported, set to 50% ...")
+brightness_of() {
+    outputs | awk -v out="$1" '$1=="Output:" {hit = ($3==out); next}
+        hit && /Brightness control:/ {for (i = 1; i <= NF; i++) if ($i ~ /%$/) {sub(/%/, "", $i); print $i; exit}}'
+}
+
+# Workaround for a KWin bug (https://bugs.kde.org/show_bug.cgi?id=494730): the eDP-1 slider writes the same
+# value to both hardware backlights, while the eDP-2 slider doesn't touch the hardware and only dims the image
+# in software (allowSdrSoftwareBrightness; KWin resets it to true by itself). So eDP-2 is kept at 100%
+# and eDP-1 controls the brightness of both panels.
+pin_lower_brightness() {
+    lower_enabled || return
+    [[ $(brightness_of "$LOWER") == 100 ]] || kscreen-doctor "output.$LOWER.brightness.100" >/dev/null
+}
+
+# while eDP-2 is disabled KWin doesn't update its backlight — sync it to the upper one directly
+copy_backlight() {
+    busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session \
+        SetBrightness ssu backlight "$LOWER_BL" "$(<"/sys/class/backlight/$UPPER_BL/brightness")"
+}
+
+lower_on() {
+    lower_enabled && return
+    local args=("output.$LOWER.enable" "output.$LOWER.brightness.100")
+    [[ -n $LOWER_POS ]] && args+=("output.$LOWER.position.$LOWER_POS")
+    kscreen-doctor "${args[@]}" >/dev/null
+    copy_backlight
+}
+
+lower_off() {
+    lower_enabled || return
+    kscreen-doctor "output.$LOWER.disable" >/dev/null
+}
+
+apply() {
+    if kbd_docked; then lower_off; else lower_on; fi
+}
+
+# one log line: keyboard, lower screen, brightness (KWin and hardware)
+state() {
+    printf 'keyboard %s, %s %s, brightness %s %s%% (hw %s) / %s %s%% (hw %s)\n' \
+        "$(kbd_docked && echo docked || echo undocked)" \
+        "$LOWER" "$(lower_enabled && echo enabled || echo disabled)" \
+        "$LOWER" "$(brightness_of "$LOWER")" "$(<"/sys/class/backlight/$LOWER_BL/brightness")" \
+        "$UPPER" "$(brightness_of "$UPPER")" "$(<"/sys/class/backlight/$UPPER_BL/brightness")"
+}
+
+watch() {
+    local last now
+    last=$(kbd_docked && echo docked || echo undocked)
+    apply
+    pin_lower_brightness
+    echo "start: $(state)"
+    # Brightness keys and scrolling over the widget move the eDP-2 slider too — reset it to 100%.
+    gdbus monitor --session --dest org.kde.ScreenBrightness 2>/dev/null | while read -r _; do
+        while read -r -t 0.3 _; do :; done
+        pin_lower_brightness
+    done &
+    # React to any usb event, but decide based on the actual state:
+    # first wait for the bouncing to settle, then compare with the previous state.
+    udevadm monitor --udev --subsystem-match=usb | while read -r _; do
+        while read -r -t "$DEBOUNCE" _; do :; done
+        now=$(kbd_docked && echo docked || echo undocked)
+        [[ $now == "$last" ]] && continue
+        last=$now
+        apply
+        state
+    done
+}
+
+case "${1:-}" in
+    watch)  watch ;;
+    toggle) if lower_enabled; then lower_off; else lower_on; fi ;;
+    on)     lower_on ;;
+    off)    lower_off ;;
+    status) state ;;
+    *)      echo "usage: ${0##*/} watch|toggle|on|off|status" >&2; exit 2 ;;
+esac

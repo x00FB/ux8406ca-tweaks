@@ -1,0 +1,7 @@
+[Desktop Entry]
+# Disables the system-wide /etc/xdg/autostart/org.kde.discover.notifier.desktop
+# (PackageKit update check at login). To revert, delete this file.
+Name=Discover
+Type=Application
+Exec=/usr/libexec/DiscoverNotifier --check-delay 20
+Hidden=true
